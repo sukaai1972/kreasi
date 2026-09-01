@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Pendulum TIK TOK</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: white;
+}
+
+.scene {
+    position: relative;
+    width: 100%;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* BATANG */
+.bar {
+    position: absolute;
+    top: 5%;
+    left: 10%;
+    width: 80%;
+    height: 45px;
+
+    background: linear-gradient(
+        to bottom,
+        #a66d3f,
+        #c18a55,
+        #8b582f,
+        #70421f
+    );
+
+    border: 2px solid #5d381e;
+}
+
+/* TITIK GANTUNG */
+.pivot {
+    position: absolute;
+    top: calc(5% + 45px);
+    left: 50%;
+
+    width: 30px;
+    height: 30px;
+
+    transform: translate(-50%, -50%);
+
+    border-radius: 50%;
+
+    background: radial-gradient(
+        circle at 30% 25%,
+        white,
+        #ddd 20%,
+        #888 55%,
+        #333 100%
+    );
+
+    border: 2px solid #555;
+
+    z-index: 10;
+}
+
+/* PENDULUM */
+.swing {
+    position: absolute;
+
+    top: calc(5% + 45px);
+    left: 50%;
+
+    width: 6px;
+    height: 65vh;
+
+    transform-origin: 50% 0;
+
+    animation: swingAnimation 2s linear infinite;
+
+    z-index: 5;
+}
+
+/* TALI */
+.rope {
+    position: absolute;
+
+    top: 0;
+    left: 50%;
+
+    width: 4px;
+    height: calc(65vh - 90px);
+
+    transform: translateX(-50%);
+
+    background: #111;
+
+    border-radius: 3px;
+}
+
+/* BOLA */
+.ball {
+    position: absolute;
+
+    left: 50%;
+    bottom: 0;
+
+    width: 100px;
+    height: 100px;
+
+    transform: translateX(-50%);
+
+    border-radius: 50%;
+
+    background: radial-gradient(
+        circle at 30% 25%,
+        #ffffff 0%,
+        #eeeeee 10%,
+        #aaaaaa 28%,
+        #666666 58%,
+        #222222 100%
+    );
+
+    border: 2px solid #444;
+}
+
+/* TIMER */
+.timer {
+    position: absolute;
+
+    left: 0;
+    right: 0;
+
+    bottom: 6%;
+
+    text-align: center;
+
+    font-family: monospace;
+
+    font-size: 32px;
+
+    font-weight: bold;
+
+    letter-spacing: 3px;
+
+    z-index: 20;
+}
+
+/* TOMBOL SUARA */
+.soundButton {
+    position: absolute;
+
+    left: 15px;
+    bottom: 15px;
+
+    padding: 8px 12px;
+
+    background: #eeeeee;
+
+    border: 1px solid #999;
+
+    border-radius: 6px;
+
+    color: #333;
+
+    font-size: 14px;
+
+    cursor: pointer;
+
+    z-index: 30;
+}
+
+.soundButton:hover {
+    background: #dddddd;
+}
+
+/* ANIMASI */
+@keyframes swingAnimation {
+
+    0% {
+        transform: rotate(-30deg);
+    }
+
+    50% {
+        transform: rotate(30deg);
+    }
+
+    100% {
+        transform: rotate(-30deg);
+    }
+
+}
+</style>
+</head>
+
+<body>
+
+<div class="scene">
+
+    <div class="bar"></div>
+
+    <div class="pivot"></div>
+
+    <div class="swing">
+
+        <div class="rope"></div>
+
+        <div class="ball"></div>
+
+    </div>
+
+    <div class="timer" id="timer">
+        00:00:00
+    </div>
+
+    <button
+        class="soundButton"
+        id="soundButton">
+        🔇 Click untuk bunyi
+    </button>
+
+</div>
+
+
+<script>
+
+let audioContext = null;
+
+let soundEnabled = false;
+
+let startTime = performance.now();
+
+let lastBeat = -1;
+
+let seconds = 0;
+
+
+/* =========================
+   AKTIFKAN / MATIKAN SUARA
+========================= */
+
+function toggleSound() {
+
+    if (!audioContext) {
+
+        audioContext =
+            new (
+                window.AudioContext ||
+                window.webkitAudioContext
+            )();
+
+    }
+
+    if (
+        audioContext.state ===
+        "suspended"
+    ) {
+
+        audioContext.resume();
+
+    }
+
+
+    soundEnabled =
+        !soundEnabled;
+
+
+    const button =
+        document.getElementById(
+            "soundButton"
+        );
+
+
+    if (soundEnabled) {
+
+        button.textContent =
+            "🔊 Nonaktifkan suara";
+
+        /*
+           Bunyi percobaan
+           saat suara diaktifkan
+        */
+
+        playSound(650);
+
+    } else {
+
+        button.textContent =
+            "🔇 Click untuk bunyi";
+
+    }
+
+}
+
+
+/* =========================
+   SUARA
+========================= */
+
+function playSound(frequency) {
+
+    if (!soundEnabled) return;
+
+    if (!audioContext) return;
+
+    if (
+        audioContext.state ===
+        "suspended"
+    ) return;
+
+
+    const oscillator =
+        audioContext.createOscillator();
+
+    const gain =
+        audioContext.createGain();
+
+
+    oscillator.type = "sine";
+
+    oscillator.frequency.value =
+        frequency;
+
+
+    gain.gain.setValueAtTime(
+        0.20,
+        audioContext.currentTime
+    );
+
+    gain.gain.exponentialRampToValueAtTime(
+        0.001,
+        audioContext.currentTime + 0.12
+    );
+
+
+    oscillator.connect(gain);
+
+    gain.connect(
+        audioContext.destination
+    );
+
+
+    oscillator.start();
+
+    oscillator.stop(
+        audioContext.currentTime + 0.12
+    );
+
+}
+
+
+/* =========================
+   TIMER
+========================= */
+
+function updateTimer() {
+
+    const hours =
+        Math.floor(seconds / 3600);
+
+    const minutes =
+        Math.floor(
+            (seconds % 3600) / 60
+        );
+
+    const secs =
+        seconds % 60;
+
+
+    document.getElementById(
+        "timer"
+    ).textContent =
+
+        String(hours).padStart(2, "0") +
+        ":" +
+
+        String(minutes).padStart(2, "0") +
+        ":" +
+
+        String(secs).padStart(2, "0");
+
+}
+
+
+/* =========================
+   ANIMASI + KETUKAN
+========================= */
+
+function animate(time) {
+
+    const elapsed =
+        (time - startTime) / 1000;
+
+
+    /*
+       Setiap 1 detik
+       waktu bertambah.
+    */
+
+    const beat =
+        Math.floor(elapsed);
+
+
+    if (
+        beat !== lastBeat
+    ) {
+
+        lastBeat = beat;
+
+        seconds = beat;
+
+        updateTimer();
+
+
+        /*
+           KIRI  = TIK
+           KANAN = TOK
+        */
+
+        if (
+            beat % 2 === 0
+        ) {
+
+            playSound(750);
+
+        } else {
+
+            playSound(450);
+
+        }
+
+    }
+
+
+    requestAnimationFrame(
+        animate
+    );
+
+}
+
+
+/* =========================
+   TOMBOL
+========================= */
+
+document.getElementById(
+    "soundButton"
+).addEventListener(
+    "click",
+    toggleSound
+);
+
+
+/* =========================
+   MULAI OTOMATIS
+========================= */
+
+updateTimer();
+
+requestAnimationFrame(
+    animate
+);
+
+</script>
+
+</body>
+</html>
