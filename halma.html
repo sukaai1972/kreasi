@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Halma vs Komputer</title>
+<style>
+:root{--bg:#0d1117;--panel:#171d26;--border:#303949;--text:#f5f7fb;--muted:#9aa6b7;--blue:#3097ff;--red:#ff5968;--yellow:#ffd45a}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:linear-gradient(#0b0f14,#171d27);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;display:flex;justify-content:center}
+.app{width:min(720px,100%);padding:10px}
+.header{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
+h1{font-size:20px;margin:0}.sub{font-size:12px;color:var(--muted)}
+.tools{display:flex;gap:7px;align-items:center}
+select,button{border:1px solid var(--border);background:#202733;color:var(--text);border-radius:10px;padding:8px 10px;font-weight:700}
+.bar{display:flex;justify-content:space-between;align-items:center;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:8px 10px;margin-bottom:8px}
+.status{font-weight:800;font-size:13px}.count{font-size:12px;color:var(--muted)}.count b{color:var(--text)}
+.board{background:radial-gradient(circle,#202735,#10151c 74%);border:1px solid var(--border);border-radius:16px;padding:5px}
+canvas{display:block;width:100%;height:auto;touch-action:none}
+.help{font-size:12px;color:var(--muted);background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:8px 10px;margin-top:8px;line-height:1.4}
+.help strong{color:var(--text)}
+.modal{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;padding:20px}
+.modal.show{display:flex}.box{width:min(360px,100%);background:#1a202a;border:1px solid #394354;border-radius:17px;padding:20px;text-align:center}
+.box h2{margin:0 0 6px}.box p{margin:0 0 12px;color:var(--muted);font-size:14px}.box button{width:100%;padding:11px}
+@media(max-width:520px){.header{align-items:flex-start}.tools{flex-wrap:wrap;justify-content:flex-end}h1{font-size:18px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <div><h1>HALMA</h1><div class="sub">Kamu vs komputer</div></div>
+    <div class="tools">
+      <select id="difficulty"><option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Difficult</option></select>
+      <button id="newGame">Game Baru</button>
+    </div>
+  </div>
+  <div class="bar">
+    <div class="status" id="status">Giliran kamu</div>
+    <div class="count">Kamu: <b id="hc">10</b> &nbsp; Komputer: <b id="ac">10</b></div>
+  </div>
+  <div class="board"><canvas id="canvas" width="700" height="640"></canvas></div>
+  <div class="help"><strong>Cara main:</strong> ketuk pion biru → ketuk lubang kosong. Pion boleh bergerak satu langkah atau melompat melewati pion lain, dan lompatan dapat berantai.</div>
+</div>
+
+<div class="modal" id="modal"><div class="box">
+<h2 id="title"></h2><p id="msg"></p><button id="again">Main Lagi</button>
+</div></div>
+
+<script>
+(() => {
+const canvas=document.getElementById('canvas'),ctx=canvas.getContext('2d');
+const statusEl=document.getElementById('status'),hc=document.getElementById('hc'),ac=document.getElementById('ac');
+const difficulty=document.getElementById('difficulty'),modal=document.getElementById('modal');
+const title=document.getElementById('title'),msg=document.getElementById('msg');
+
+const rowCounts=[1,2,3,4,13,12,11,10,9,10,11,12,13,4,3,2,1];
+const holes=[];
+const byId=new Map();
+const board=new Map();
+
+// Coordinates in a simple 2D triangular lattice.
+// Each row is centered; horizontal spacing = 1, vertical spacing = sqrt(3)/2.
+const VH=Math.sqrt(3)/2;
+for(let r=0;r<17;r++){
+  const n=rowCounts[r];
+  for(let j=0;j<n;j++){
+    const x=j-(n-1)/2;
+    const y=r*VH;
+    const id=r+':'+j;
+    const h={id,r,j,x,y};
+    holes.push(h);byId.set(id,h);board.set(id,0);
+  }
+}
+
+// Build actual neighbor graph by geometry.
+const neighbors=new Map();
+for(const h of holes){
+  const arr=[];
+  for(const g of holes){
+    if(h===g) continue;
+    const dx=g.x-h.x,dy=g.y-h.y;
+    const d=Math.hypot(dx,dy);
+    if(Math.abs(d-1)<0.08) arr.push(g);
+  }
+  neighbors.set(h.id,arr);
+}
+
+// Camps: top and bottom 10 holes.
+const topCamp=holes.filter(h=>h.r<=3);
+const bottomCamp=holes.filter(h=>h.r>=13);
+const humanGoal=new Set(topCamp.map(h=>h.id));
+const aiGoal=new Set(bottomCamp.map(h=>h.id));
+
+let selected=null,chain=false,turn=1,gameOver=false;
+
+function reset(){
+  for(const h of holes) board.set(h.id,0);
+  bottomCamp.forEach(h=>board.set(h.id,1));
+  topCamp.forEach(h=>board.set(h.id,2));
+  selected=null;chain=false;turn=1;gameOver=false;
+  hc.textContent='10';ac.textContent='10';statusEl.textContent='Giliran kamu';
+  modal.classList.remove('show');draw();
+}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+function adjacent(h){return neighbors.get(h.id).filter(g=>board.get(g.id)===0)}
+function jumpMoves(start){
+  const out=[],seen=new Set([start.id]),q=[start];
+  while(q.length){
+    const cur=q.shift();
+    const ns=neighbors.get(cur.id);
+    for(const mid of ns){
+      if(board.get(mid.id)===0) continue;
+      // Find a hole exactly one neighbor-distance beyond the jumped piece,
+      // along the same direction.
+      const tx=mid.x+(mid.x-cur.x), ty=mid.y+(mid.y-cur.y);
+      let land=null,best=0.06;
+      for(const g of holes){
+        if(board.get(g.id)!==0) continue;
+        const dd=Math.hypot(g.x-tx,g.y-ty);
+        if(dd<best){best=dd;land=g}
+      }
+      if(land && !seen.has(land.id)){
+        seen.add(land.id);out.push(land);q.push(land);
+      }
+    }
+  }
+  return out;
+}
+function allDestinations(h){return adjacent(h).concat(jumpMoves(h))}
+function move(from,to,color){board.set(from.id,0);board.set(to.id,color)}
+function win(color){
+  const goal=color===1?humanGoal:aiGoal;
+  for(const h of holes) if(board.get(h.id)===color && !goal.has(h.id)) return false;
+  return true;
+}
+function finish(color){
+  gameOver=true;
+  if(color===1){title.textContent='Kamu Menang!';msg.textContent='Semua pionmu sudah masuk ke segitiga komputer.'}
+  else{title.textContent='Komputer Menang';msg.textContent='Komputer lebih dulu menempatkan semua pionnya di segitiga tujuan.'}
+  modal.classList.add('show');
+}
+function counts(){let h=0,a=0;for(const v of board.values()){if(v===1)h++;if(v===2)a++;}hc.textContent=h;ac.textContent=a}
+
+// Drawing
+function view(){
+  const minX=-6.7,maxX=6.7,minY=0,maxY=16*VH;
+  const s=Math.min((canvas.width-36)/(maxX-minX),(canvas.height-36)/(maxY-minY));
+  return {s,ox:canvas.width/2,oy:canvas.height/2};
+}
+function screen(h){
+  const v=view();
+  return {x:v.ox+h.x*v.s,y:v.oy+(h.y-8*VH)*v.s};
+}
+function hit(x,y){
+  const v=view(),rad=Math.max(17,v.s*.34);
+  let best=null,bd=1e9;
+  for(const h of holes){const p=screen(h),d=Math.hypot(x-p.x,y-p.y);if(d<bd){bd=d;best=h}}
+  return bd<=rad?best:null;
+}
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const v=view(),rr=Math.max(7,v.s*.23), line=Math.max(1,v.s*.035);
+
+  // Connecting lines
+  ctx.strokeStyle='#2f3847';ctx.lineWidth=line;
+  const drawn=new Set();
+  for(const h of holes){
+    const p=screen(h);
+    for(const g of neighbors.get(h.id)){
+      const k=h.id+'|'+g.id,kr=g.id+'|'+h.id;if(drawn.has(k)||drawn.has(kr))continue;
+      drawn.add(k);const q=screen(g);ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);ctx.stroke();
+    }
+  }
+
+  // Holes and camps
+  for(const h of holes){
+    const p=screen(h),id=h.id;
+    let fill='#202733',stroke='#3a4454';
+    if(humanGoal.has(id)){fill='#172b3e';stroke='#27587f'}
+    if(aiGoal.has(id)){fill='#3a2025';stroke='#81404a'}
+    if(selected && id===selected.id){fill='#3b351e';stroke='#ffd65a'}
+    else if(chain && jumpMoves(selected).some(x=>x.id===id)){fill='#36301e';stroke='#8d752d'}
+    ctx.fillStyle=fill;ctx.strokeStyle=stroke;ctx.lineWidth=line;
+    ctx.beginPath();ctx.arc(p.x,p.y,rr,0,Math.PI*2);ctx.fill();ctx.stroke();
+
+    const val=board.get(id);
+    if(val){
+      const rad=rr*.78;
+      const grad=ctx.createRadialGradient(p.x-rad*.35,p.y-rad*.4,rad*.08,p.x,p.y,rad);
+      if(val===1){grad.addColorStop(0,'#d5edff');grad.addColorStop(.35,'#3097ff');grad.addColorStop(1,'#126ab9')}
+      else{grad.addColorStop(0,'#ffe0e4');grad.addColorStop(.35,'#ff5968');grad.addColorStop(1,'#b32031')}
+      ctx.fillStyle=grad;ctx.beginPath();ctx.arc(p.x,p.y,rad,0,Math.PI*2);ctx.fill();
+    }
+  }
+}
+
+// Player interaction
+function clickHole(h){
+  if(gameOver||turn!==1)return;
+  const val=board.get(h.id);
+
+  if(!selected){
+    if(val===1){selected=h;chain=false;statusEl.textContent='Pilih tempat tujuan';draw()}
+    return;
+  }
+
+  if(!chain && val===1 && h.id!==selected.id){
+    selected=h;draw();return;
+  }
+
+  if(chain){
+    const js=jumpMoves(selected);
+    if(js.some(x=>x.id===h.id)){
+      move(selected,h,1);selected=h;counts();
+      if(win(1)){draw();finish(1);return}
+      const more=jumpMoves(selected);
+      if(more.length){statusEl.textContent='Bisa lompat lagi — ketuk tujuan berikutnya';draw()}
+      else finishHuman();
+    }else if(h.id===selected.id){finishHuman()}
+    return;
+  }
+
+  if(val!==0)return;
+  const one=adjacent(selected).some(x=>x.id===h.id);
+  const jump=jumpMoves(selected).some(x=>x.id===h.id);
+  if(!one&&!jump)return;
+
+  move(selected,h,1);counts();
+  if(win(1)){draw();finish(1);return}
+  if(jump){
+    selected=h;chain=true;
+    if(jumpMoves(selected).length){statusEl.textContent='Bisa lompat lagi — ketuk tujuan berikutnya';draw();return}
+  }
+  finishHuman();
+}
+function finishHuman(){
+  selected=null;chain=false;turn=2;statusEl.textContent='Komputer berpikir…';draw();setTimeout(aiTurn,320)
+}
+canvas.addEventListener('pointerdown',e=>{
+  const r=canvas.getBoundingClientRect();
+  const x=(e.clientX-r.left)*canvas.width/r.width, y=(e.clientY-r.top)*canvas.height/r.height;
+  const h=hit(x,y);if(h)clickHole(h);
+});
+
+// Computer
+function goalDistance(h){
+  let best=99;for(const id of aiGoal)best=Math.min(best,dist(h,byId.get(id)));return best;
+}
+function score(m,diff){
+  const b=goalDistance(m.from),a=goalDistance(m.to);
+  let s=(b-a)*10;
+  if(aiGoal.has(m.to.id))s+=35;
+  if(aiGoal.has(m.from.id))s-=12;
+  if(humanGoal.has(m.to.id))s-=5;
+  if(m.jump)s+=3;
+  if(diff==='easy')s+=Math.random()*16;
+  else if(diff==='medium')s+=Math.random()*5;
+  else s+=Math.random()*1;
+  return s;
+}
+function aiMoves(){
+  const arr=[];
+  for(const h of holes)if(board.get(h.id)===2){
+    for(const to of adjacent(h))arr.push({from:h,to,jump:false});
+    for(const to of jumpMoves(h))arr.push({from:h,to,jump:true});
+  }
+  return arr;
+}
+function aiMovePiece(){
+  if(gameOver)return;
+  const moves=aiMoves();
+  if(!moves.length){turn=1;statusEl.textContent='Giliran kamu';draw();return}
+  let best=-1e9,cands=[];
+  for(const m of moves){const s=score(m,difficulty.value);if(s>best+1e-9){best=s;cands=[m]}else if(Math.abs(s-best)<1e-9)cands.push(m)}
+  const m=cands[Math.floor(Math.random()*cands.length)];
+  move(m.from,m.to,2);counts();
+  if(win(2)){draw();finish(2);return}
+  turn=1;statusEl.textContent='Giliran kamu';draw();
+}
+function aiTurn(){aiMovePiece()}
+
+document.getElementById('newGame').onclick=reset;
+document.getElementById('again').onclick=reset;
+window.addEventListener('resize',draw);
+reset();
+})();
+</script>
+</body>
+</html>
